@@ -1,0 +1,71 @@
+# ==============================
+# Dependencies
+# ==============================
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# ==============================
+# Data (ChromaDB, manifests)
+# ==============================
+data/
+*.db
+
+# ==============================
+# Environment & Secrets
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# OS Files
+# ==============================
+.DS_Store
+Thumbs.db
+._*
+
+# ==============================
+# Editor / IDE
+# ==============================
+.vscode/
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ==============================
+# AI Tooling
+# ==============================
+.claude/
+.gemini/
+.cursor/
+.copilot/
+.aider*
+.continue/
+.playwright-mcp/
+screenshots/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+specs/
+
+# ==============================
+# Next.js (frontend)
+# ==============================
+frontend/.next/
+frontend/out/
+frontend/build/
+next-env.d.ts
+*.tsbuildinfo
+
+# ==============================
+# Misc
+# ==============================
+*.pem
+*.tgz
+.cache/

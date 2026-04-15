@@ -7,7 +7,7 @@ A **Retrieval-Augmented Generation** system for chatting with your course notes,
   <img src="assets/documents_ui.png" width="48%" />
 </p>
 
-**Fully local** — powered by Gemma4 via Ollama. No API keys, no cloud services, no cost.
+**High-Performance Local Inference** — powered by Gemma4 26B via LM Studio networked GPU offloading. Complete privacy, zero cloud costs, maximum speed.
 
 
 ## Features
@@ -20,7 +20,7 @@ A **Retrieval-Augmented Generation** system for chatting with your course notes,
 - 🔄 **Incremental Sync** — Auto-detects new/modified/deleted files via SHA-256 manifest
 - 📁 **Drag & Drop Upload** — Add new files directly from the browser
 - 🎯 **Course Filtering** — Scope questions to a specific course
-- 💾 **RAM Management** — Models load on-demand and immediately unload after each operation (`keep_alive: "0"`)
+- ⚡ **GPU Offloading** — Heavy generation and multimodal OCR bypass Mac RAM entirely and execute over the network on a dedicated Windows GPU.
 
 ## Architecture
 
@@ -35,11 +35,11 @@ A **Retrieval-Augmented Generation** system for chatting with your course notes,
 │                                                   │
 │  Ingestion:  Load → Chunk → Embed → ChromaDB     │
 │  Retrieval:  Vector + BM25 → RRF Fusion          │
-│  Generation: Gemma4 via Ollama (streaming)        │
+│  Generation: Gemma4 via LM Studio (streaming)     │
 │                                                   │
-│  Ollama (localhost:11434)                         │
-│  ├── gemma4:latest   → generation (~10GB RAM)    │
-│  └── nomic-embed-text → embeddings (~275MB RAM)  │
+│  LM Studio (Windows PC Server - 192.168.x.x)      │
+│  ├── google/gemma-4-26b-a4b  → generation & OCR  │
+│  └── nomic-embed-text        → embeddings        │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -47,8 +47,8 @@ A **Retrieval-Augmented Generation** system for chatting with your course notes,
 
 | Layer | Technology |
 |---|---|
-| **LLM** | Gemma4 8B (Q4_K_M) via Ollama |
-| **Embeddings** | nomic-embed-text (768-dim) via Ollama |
+| **LLM** | Gemma4 26B via LM Studio (OpenAI endpoint) |
+| **Embeddings** | nomic-embed-text-v1.5 via LM Studio |
 | **Vector DB** | ChromaDB (persistent, local) |
 | **Keyword Search** | BM25 via rank-bm25 |
 | **Reranking** | Reciprocal Rank Fusion (no model needed) |
@@ -61,11 +61,9 @@ A **Retrieval-Augmented Generation** system for chatting with your course notes,
 
 ### Prerequisites
 
-- [Ollama](https://ollama.ai) installed with models:
-  ```bash
-  ollama pull gemma4
-  ollama pull nomic-embed-text
-  ```
+- [LM Studio](https://lmstudio.ai/) running as a local server on a dedicated GPU machine:
+  - Load `google/gemma-4-26b` for Vision/Chat
+  - Load `nomic-embed-text-v1.5` for Embeddings
 - Python 3.9+
 - Node.js 18+
 

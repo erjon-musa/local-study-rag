@@ -58,7 +58,7 @@ export interface StatsResult {
 export async function* streamChat(
   question: string,
   course?: string,
-  topK: number = 8
+  topK: number = 4
 ): AsyncGenerator<ChatEvent> {
   const response = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",

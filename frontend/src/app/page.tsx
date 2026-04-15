@@ -65,27 +65,30 @@ export default function ChatPage() {
         if (event.type === "sources") {
           setMessages((prev) => {
             const updated = [...prev];
-            const last = updated[updated.length - 1];
+            const lastIndex = updated.length - 1;
+            const last = updated[lastIndex];
             if (last.role === "assistant") {
-              last.sources = event.data as Source[];
+              updated[lastIndex] = { ...last, sources: event.data as Source[] };
             }
             return updated;
           });
         } else if (event.type === "token") {
           setMessages((prev) => {
             const updated = [...prev];
-            const last = updated[updated.length - 1];
+            const lastIndex = updated.length - 1;
+            const last = updated[lastIndex];
             if (last.role === "assistant") {
-              last.content += event.data as string;
+              updated[lastIndex] = { ...last, content: last.content + (event.data as string) };
             }
             return updated;
           });
         } else if (event.type === "done") {
           setMessages((prev) => {
             const updated = [...prev];
-            const last = updated[updated.length - 1];
+            const lastIndex = updated.length - 1;
+            const last = updated[lastIndex];
             if (last.role === "assistant") {
-              last.isStreaming = false;
+              updated[lastIndex] = { ...last, isStreaming: false };
             }
             return updated;
           });
@@ -94,11 +97,14 @@ export default function ChatPage() {
     } catch (error) {
       setMessages((prev) => {
         const updated = [...prev];
-        const last = updated[updated.length - 1];
+        const lastIndex = updated.length - 1;
+        const last = updated[lastIndex];
         if (last.role === "assistant") {
-          last.content =
-            "⚠️ Something went wrong. Make sure the backend is running (`uvicorn backend.main:app --reload --port 8000`) and Ollama is active.";
-          last.isStreaming = false;
+          updated[lastIndex] = {
+            ...last,
+            content: "⚠️ Something went wrong. Make sure the backend is running and LM Studio is active.",
+            isStreaming: false
+          };
         }
         return updated;
       });

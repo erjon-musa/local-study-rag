@@ -21,7 +21,7 @@ from .api.chat import router as chat_router
 from .api.courses import router as courses_router
 from .api.documents import router as documents_router
 from .api.graph_api import router as graph_router
-from .generation.llm import check_ollama_health
+from .generation.llm import check_health
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
@@ -58,17 +58,17 @@ if frontend_graph_path.exists():
 @app.get("/api/health")
 async def health():
     """
-    Health check — verifies Ollama is running.
-    Does NOT load any model into RAM.
+    Health check — verifies LM Studio is reachable.
+    Does NOT load any model into Mac RAM.
     """
-    ollama_status = check_ollama_health()
+    llm_status = check_health()
     
     vault_path = os.getenv("VAULT_PATH", "")
     vault_exists = Path(vault_path).expanduser().exists() if vault_path else False
 
     return {
-        "status": "ok" if ollama_status["status"] == "ok" else "degraded",
-        "ollama": ollama_status,
+        "status": "ok" if llm_status["status"] == "ok" else "degraded",
+        "llm": llm_status,
         "vault_path": vault_path,
         "vault_exists": vault_exists,
     }

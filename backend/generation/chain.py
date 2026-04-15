@@ -132,7 +132,7 @@ class RAGChain:
         self,
         question: str,
         course: Optional[str] = None,
-        top_k: int = 8,
+        top_k: int = 4,
     ) -> tuple:
         """
         Async version of answer_stream.

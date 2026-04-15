@@ -161,8 +161,50 @@ def chunk_document(doc: Document, max_size: int = 800, overlap: int = 100) -> Li
         return chunk_by_fixed_size(doc, max_size, overlap)
 
 
+def _build_context_header(metadata: dict) -> str:
+    """
+    Build a contextual header to prepend to each chunk.
+
+    This dramatically improves retrieval for document-specific queries
+    (e.g., "question 3 from the 223 exam") because the header gives
+    the embedding model document-level context that raw chunk text lacks.
+
+    Format: [CMPE 223 - Exam - filename.pdf, Page 3]
+    """
+    parts = []
+
+    # Course (short form if possible)
+    course = metadata.get("course", "")
+    if course:
+        # Extract short code: "CMPE 223 - Software Specification" → "CMPE 223"
+        short_course = course.split(" - ")[0].strip() if " - " in course else course
+        parts.append(short_course)
+
+    # Document type from category
+    category = metadata.get("category", "")
+    if category:
+        # Normalize: "Lectures" → "Lecture", "Exams" → "Exam"
+        doc_type = category.rstrip("s") if category.endswith("s") else category
+        parts.append(doc_type)
+
+    # Filename
+    source = metadata.get("source", "")
+    if source:
+        parts.append(source)
+
+    # Page number
+    page = metadata.get("page", "")
+    if page:
+        parts.append(f"Page {page}")
+
+    if not parts:
+        return ""
+
+    return f"[{' - '.join(parts)}]\n"
+
+
 def chunk_documents(docs: List[Document], max_size: int = 800, overlap: int = 100) -> List[Chunk]:
-    """Chunk a list of documents, assigning unique IDs."""
+    """Chunk a list of documents, assigning unique IDs and contextual headers."""
     all_chunks = []
 
     for doc in docs:
@@ -171,10 +213,18 @@ def chunk_documents(docs: List[Document], max_size: int = 800, overlap: int = 10
         source = doc.metadata.get("source", "unknown")
         page = doc.metadata.get("page", 0)
 
+        # Build context header from document metadata
+        context_header = _build_context_header(doc.metadata)
+
         for i, chunk in enumerate(doc_chunks):
             chunk.chunk_id = f"{source}:p{page}:c{i}"
             chunk.metadata["chunk_index"] = i
             chunk.metadata["total_chunks_in_doc"] = len(doc_chunks)
+
+            # Prepend context header to chunk text for better retrieval
+            if context_header:
+                chunk.text = context_header + chunk.text
+
             all_chunks.append(chunk)
 
     return all_chunks

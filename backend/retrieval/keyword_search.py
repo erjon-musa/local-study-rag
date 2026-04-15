@@ -69,8 +69,12 @@ class KeywordSearch:
             self._index = None
             return
 
-        # Tokenize for BM25
-        tokenized = [doc.lower().split() for doc in self._docs]
+        # Tokenize for BM25 — split on whitespace AND punctuation
+        # so 'CISC/CMPE-223' → ['cisc', 'cmpe', '223']
+        import re
+        tokenized = [re.split(r'[\s/\-_,;:()]+', doc.lower()) for doc in self._docs]
+        # Filter empty tokens
+        tokenized = [[t for t in tokens if t] for tokens in tokenized]
         self._index = BM25Okapi(tokenized)
 
     def search(
@@ -90,7 +94,8 @@ class KeywordSearch:
         if not self._index or not self._docs:
             return []
 
-        tokenized_query = query.lower().split()
+        import re
+        tokenized_query = [t for t in re.split(r'[\s/\-_,;:()]+', query.lower()) if t]
         scores = self._index.get_scores(tokenized_query)
 
         # Get top-k indices

@@ -137,6 +137,54 @@ class IngestionPipeline:
 
         return course, category
 
+    @staticmethod
+    def _extract_course_code(course: str) -> str:
+        """
+        Extract short course code from full course name.
+        'CMPE 223 - Software Specification' → 'CMPE 223'
+        """
+        if " - " in course:
+            return course.split(" - ")[0].strip()
+        return course
+
+    @staticmethod
+    def _extract_doc_type(category: str) -> str:
+        """
+        Normalize category folder name to a doc_type.
+        'Lectures' → 'lecture', 'Exams' → 'exam'
+        """
+        mapping = {
+            "Lectures": "lecture",
+            "Exams": "exam",
+            "Assignments": "assignment",
+            "Labs": "lab",
+            "Resources": "resource",
+        }
+        return mapping.get(category, "resource")
+
+    @staticmethod
+    def _extract_year(filename: str) -> str:
+        """
+        Try to extract a year from the filename.
+        'Final Exam - April 2014.pdf' → '2014'
+        'midtermSampleSolutionsW26.pdf' → '2026'
+        'a1W26.pdf' → '2026'
+        """
+        import re
+
+        # Match explicit 4-digit years (2000-2099)
+        m = re.search(r"(20\d{2})", filename)
+        if m:
+            return m.group(1)
+
+        # Match W26, W22 etc. (Queen's winter term notation)
+        m = re.search(r"W(\d{2})", filename)
+        if m:
+            year_short = int(m.group(1))
+            return str(2000 + year_short)
+
+        return ""
+
     def scan(self) -> ScanResult:
         """
         Scan the vault directory and compare against the manifest.
@@ -198,10 +246,22 @@ class IngestionPipeline:
         rel_path = str(filepath.relative_to(self.vault_path))
         course, category = self._detect_course_and_category(rel_path)
 
+        # Compute enriched metadata fields
+        course_code = self._extract_course_code(course)
+        doc_type = self._extract_doc_type(category)
+        year = self._extract_year(filepath.name)
+
         # Load
         docs = load_file(filepath, course=course, category=category)
         if not docs:
             return 0, []
+
+        # Inject enriched metadata into every loaded document
+        for doc in docs:
+            doc.metadata["course_code"] = course_code
+            doc.metadata["doc_type"] = doc_type
+            if year:
+                doc.metadata["year"] = year
 
         # Chunk
         chunks = chunk_documents(docs, max_size=self.chunk_size, overlap=self.chunk_overlap)

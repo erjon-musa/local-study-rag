@@ -37,7 +37,7 @@ def get_pipeline() -> IngestionPipeline:
 class ChatRequest(BaseModel):
     question: str
     course: Optional[str] = None
-    top_k: int = 8
+    top_k: int = 4
 
 
 @router.post("/chat")
@@ -52,14 +52,11 @@ async def chat(request: ChatRequest):
     pipeline = get_pipeline()
 
     # Quick scan for new files (fast if nothing changed)
-    scan = pipeline.scan()
-    if scan.has_changes:
-        print(f"  Auto-scan: {scan.summary()}")
-        ingest_result = pipeline.ingest()
-        print(f"  Auto-ingested: {ingest_result.new} new, {ingest_result.updated} updated")
+    # Removing auto-ingest here so it doesn't block the chat UI.
+    # We will trigger ingest manually.
 
-    # Get streaming answer + sources
-    token_stream, sources = chain.answer_stream(
+    # Get streaming answer + sources asynchronously
+    token_stream, sources = await chain.answer_stream_async(
         question=request.question,
         course=request.course,
         top_k=request.top_k,
@@ -82,9 +79,13 @@ async def chat(request: ChatRequest):
         # First, send sources as a JSON event
         yield json.dumps({"type": "sources", "data": sources_data}) + "\n"
 
-        # Then stream the answer tokens
-        for token in token_stream:
-            yield json.dumps({"type": "token", "data": token}) + "\n"
+        try:
+            # Then stream the answer tokens using async iteration
+            async for token in token_stream:
+                yield json.dumps({"type": "token", "data": token}) + "\n"
+        except Exception as e:
+            error_msg = f"\n\n[Model Error: {str(e)}]"
+            yield json.dumps({"type": "token", "data": error_msg}) + "\n"
 
         # Signal completion
         yield json.dumps({"type": "done"}) + "\n"

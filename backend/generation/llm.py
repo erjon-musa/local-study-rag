@@ -1,21 +1,20 @@
 """
-Ollama Gemma4 client with streaming and RAM management.
+LLM client — routes all generation to PC GPU via LM Studio LM Link.
 
-All requests use keep_alive="0" to immediately unload the model
-from RAM after each generation. Gemma4 (8B) uses ~10GB RAM, so
-this is critical on a Mac.
+No local model loading. If LM Studio is unreachable, we error
+instead of silently loading a 10GB model into Mac RAM.
 """
 from __future__ import annotations
 
-import json
 import os
-from typing import AsyncIterator, Iterator, Optional
+from typing import AsyncIterator, Iterator
 
 import httpx
+import openai
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gemma4:latest")
-KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "0")
+# LM Studio Config (via LM Link proxy on localhost)
+LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "google/gemma-4-26b-a4b")
 
 
 def generate_stream(
@@ -23,44 +22,38 @@ def generate_stream(
     system: str = "",
     model: str = None,
     temperature: float = 0.3,
-    max_tokens: int = 2048,
+    max_tokens: int = 4096,
 ) -> Iterator[str]:
     """
-    Stream a response from Gemma4 via Ollama.
-    
+    Stream a response from the PC GPU via LM Studio.
     Yields text chunks as they arrive.
-    Uses keep_alive="0" to unload from RAM when done.
     """
-    model = model or GENERATION_MODEL
+    client = openai.OpenAI(
+        base_url=LMSTUDIO_BASE_URL,
+        api_key="lmstudio-link",
+    )
 
-    with httpx.Client(timeout=300.0) as client:
-        with client.stream(
-            "POST",
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "system": system,
-                "stream": True,
-                "keep_alive": KEEP_ALIVE,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            },
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        data = json.loads(line)
-                        token = data.get("response", "")
-                        if token:
-                            yield token
-                        if data.get("done", False):
-                            break
-                    except json.JSONDecodeError:
-                        continue
+    system_prompt = system + "\n\nDo not use internal reasoning. Respond directly."
+
+    stream = client.chat.completions.create(
+        model=model or LMSTUDIO_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        stream=True,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        frequency_penalty=0.3,
+    )
+
+    for chunk in stream:
+        delta = chunk.choices[0].delta
+        token = delta.content or ""
+        reasoning = getattr(delta, "reasoning_content", None) or ""
+        combined = token or reasoning
+        if combined:
+            yield combined
 
 
 async def generate_stream_async(
@@ -68,44 +61,43 @@ async def generate_stream_async(
     system: str = "",
     model: str = None,
     temperature: float = 0.3,
-    max_tokens: int = 2048,
+    max_tokens: int = 4096,
 ) -> AsyncIterator[str]:
     """
-    Async streaming generation from Gemma4 via Ollama.
-    
+    Async stream from the PC GPU via LM Studio.
     Yields text chunks as they arrive.
-    Uses keep_alive="0" to unload from RAM when done.
     """
-    model = model or GENERATION_MODEL
+    client = openai.AsyncOpenAI(
+        base_url=LMSTUDIO_BASE_URL,
+        api_key="lmstudio-link",
+    )
 
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        async with client.stream(
-            "POST",
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "system": system,
-                "stream": True,
-                "keep_alive": KEEP_ALIVE,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            },
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line:
-                    try:
-                        data = json.loads(line)
-                        token = data.get("response", "")
-                        if token:
-                            yield token
-                        if data.get("done", False):
-                            break
-                    except json.JSONDecodeError:
-                        continue
+    system_prompt = system + "\n\nDo not use internal reasoning. Respond directly."
+
+    stream = await client.chat.completions.create(
+        model=model or LMSTUDIO_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ],
+        stream=True,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        frequency_penalty=0.3,
+    )
+
+    async for chunk in stream:
+        if not chunk.choices:
+            continue
+            
+        delta = chunk.choices[0].delta
+        
+        # We intentionally IGNORE reasoning_content so the user only sees the final answer.
+        # The frontend will just show '...' while the model thinks.
+        
+        # Append actual content
+        if getattr(delta, "content", None):
+            yield delta.content
 
 
 def generate(
@@ -113,29 +105,23 @@ def generate(
     system: str = "",
     model: str = None,
     temperature: float = 0.3,
-    max_tokens: int = 2048,
+    max_tokens: int = 4096,
 ) -> str:
-    """
-    Non-streaming generation. Returns the full response as a string.
-    Uses keep_alive="0" to unload from RAM when done.
-    """
+    """Non-streaming generation. Returns the full response as a string."""
     tokens = []
     for token in generate_stream(prompt, system, model, temperature, max_tokens):
         tokens.append(token)
     return "".join(tokens)
 
 
-def check_ollama_health() -> dict:
-    """
-    Check if Ollama is running WITHOUT loading any model.
-    Just hits the /api/tags endpoint to list available models.
-    """
+def check_health() -> dict:
+    """Check if LM Studio is running and the model is loaded."""
     try:
         with httpx.Client(timeout=5.0) as client:
-            response = client.get(f"{OLLAMA_BASE_URL}/api/tags")
+            response = client.get(f"{LMSTUDIO_BASE_URL}/models")
             response.raise_for_status()
             data = response.json()
-            models = [m["name"] for m in data.get("models", [])]
-            return {"status": "ok", "models": models}
+            models = [m["id"] for m in data.get("data", [])]
+            return {"status": "ok", "backend": "lmstudio", "models": models}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "backend": "lmstudio", "error": str(e)}

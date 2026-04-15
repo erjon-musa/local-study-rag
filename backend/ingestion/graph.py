@@ -1,7 +1,7 @@
 """
 Knowledge Graph Extraction Module
 
-Extracts entities and relationships from document chunks using Ollama LLM,
+Extracts entities and relationships from document chunks using LM Studio,
 then builds and persists a knowledge graph as JSON.
 """
 from __future__ import annotations
@@ -13,18 +13,15 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import httpx
+import openai
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # ── Configuration ───────────────────────────────────────────────────
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gemma4:latest")
+LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "google/gemma-4-26b-a4b")
 GRAPH_OUTPUT_PATH = Path(os.getenv("GRAPH_OUTPUT_PATH", "./data/knowledge_graph.json"))
-
-# Ollama keep_alive: 0 means eject model from RAM immediately after use
-OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "0")
 
 # Entity types we tell the LLM to look for
 ENTITY_TYPES = [
@@ -196,35 +193,34 @@ class KnowledgeGraph:
         return re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
 
 
-# ── Ollama Integration ──────────────────────────────────────────────
+# ── LM Studio Integration ──────────────────────────────────────────────
 
-def call_ollama(prompt: str, timeout: float = 120.0) -> str:
+def call_llm(prompt: str, timeout: float = 120.0) -> str:
     """
-    Send a prompt to Ollama and return the response text.
-    Uses keep_alive=0 so the model is ejected from RAM immediately.
+    Send a prompt to LM Studio and return the response text.
+    All processing happens on the PC GPU via LM Link.
     """
-    url = f"{OLLAMA_BASE_URL}/api/generate"
-    payload = {
-        "model": GENERATION_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "keep_alive": OLLAMA_KEEP_ALIVE,
-        "options": {
-            "temperature": 0.1,  # Low temperature for consistent extraction
-            "num_predict": 2048,
-        },
-    }
+    client = openai.OpenAI(
+        base_url=LMSTUDIO_BASE_URL,
+        api_key="lmstudio-link",
+        timeout=timeout,
+    )
 
-    try:
-        # Long timeout — first call loads the model into RAM
-        with httpx.Client(timeout=httpx.Timeout(timeout, connect=30.0)) as client:
-            resp = client.post(url, json=payload)
-            resp.raise_for_status()
-            return resp.json().get("response", "")
-    except httpx.TimeoutException:
-        raise RuntimeError(f"Ollama timed out after {timeout}s — is the model too large for your RAM?")
-    except httpx.ConnectError:
-        raise RuntimeError(f"Cannot connect to Ollama at {OLLAMA_BASE_URL} — is it running?")
+    response = client.chat.completions.create(
+        model=LMSTUDIO_MODEL,
+        messages=[
+            {"role": "system", "content": "You are a knowledge graph extraction engine. Respond only with valid JSON. Do not use internal reasoning. Respond directly."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.1,
+        max_tokens=2048,
+    )
+
+    message = response.choices[0].message
+    text = message.content or ""
+    if not text:
+        text = getattr(message, "reasoning_content", None) or ""
+    return text
 
 
 def parse_llm_response(response_text: str) -> dict | None:
@@ -266,7 +262,7 @@ def extract_from_chunk(
         filename=filename,
     )
 
-    response = call_ollama(prompt)
+    response = call_llm(prompt)
     return parse_llm_response(response)
 
 

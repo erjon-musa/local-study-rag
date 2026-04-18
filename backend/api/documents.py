@@ -120,6 +120,13 @@ async def list_documents(course: Optional[str] = None):
             "category": doc_category,
             "chunks": info.get("chunks", 0),
             "ingested_at": info.get("ingested_at", ""),
+            # OCR visibility — populated by pipeline._ingest_file; absent on
+            # older manifest entries (default to 0 rather than None so the
+            # frontend can treat it as a plain number).
+            "ocr_pages": info.get("ocr_pages", 0),
+            "ocr_failed_pages": info.get("ocr_failed_pages", 0),
+            "skipped_blank_pages": info.get("skipped_blank_pages", 0),
+            "status": info.get("status", ""),
         })
 
     # Sort by course, then category, then name

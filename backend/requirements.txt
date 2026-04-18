@@ -6,5 +6,13 @@ python-docx
 beautifulsoup4
 rank-bm25
 httpx
+openai
 python-dotenv
 python-multipart
+
+# Local OCR (LightOnOCR-2-1B on Mac Apple Silicon via MPS)
+transformers>=5.0.0
+torch>=2.5.0
+pillow
+accelerate
+pypdfium2

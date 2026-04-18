@@ -57,29 +57,50 @@ def generate_stream(
 
 
 async def generate_stream_async(
-    prompt: str,
+    prompt: str = None,
     system: str = "",
     model: str = None,
     temperature: float = 0.3,
     max_tokens: int = 4096,
+    messages: list = None,
 ) -> AsyncIterator[str]:
     """
     Async stream from the PC GPU via LM Studio.
     Yields text chunks as they arrive.
+
+    Two calling modes (exactly one must be provided):
+      - Legacy single-turn:  prompt="..." [+ system="..."]
+        Internally wraps into a messages list with the system + user turns.
+      - Multi-turn / history: messages=[{"role": "system"|"user"|"assistant",
+                                          "content": "..."}, ...]
+        Passed through unchanged to LM Studio's OpenAI-compatible API.
+        Callers are responsible for building the full messages list
+        (system prompt + neutralized history + current user turn).
     """
+    if (prompt is None) == (messages is None):
+        raise ValueError(
+            "generate_stream_async: provide exactly one of `prompt` or `messages`"
+        )
+
     client = openai.AsyncOpenAI(
         base_url=LMSTUDIO_BASE_URL,
         api_key="lmstudio-link",
     )
 
-    system_prompt = system + "\n\nDo not use internal reasoning. Respond directly."
+    if messages is None:
+        # Legacy path: build the simple system+user messages list.
+        system_prompt = system + "\n\nDo not use internal reasoning. Respond directly."
+        request_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+    else:
+        # Multi-turn path: pass through as-is. Caller owns message construction.
+        request_messages = messages
 
     stream = await client.chat.completions.create(
         model=model or LMSTUDIO_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
+        messages=request_messages,
         stream=True,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -89,12 +110,12 @@ async def generate_stream_async(
     async for chunk in stream:
         if not chunk.choices:
             continue
-            
+
         delta = chunk.choices[0].delta
-        
+
         # We intentionally IGNORE reasoning_content so the user only sees the final answer.
         # The frontend will just show '...' while the model thinks.
-        
+
         # Append actual content
         if getattr(delta, "content", None):
             yield delta.content

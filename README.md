@@ -13,34 +13,43 @@ A **Retrieval-Augmented Generation** system for chatting with your course notes,
 ## Features
 
 - 🔍 **Hybrid Search** — Semantic (vector) + BM25 keyword search with Reciprocal Rank Fusion
+- 🎯 **Doc-Type-Aware Retrieval** — Explanatory queries boost lectures/resources and penalize exam keyword hits
 - 📚 **Multi-Format Ingestion** — PDF, DOCX, Markdown, TXT, HTML support
 - 🧠 **Smart Chunking** — Heading-aware splitting for markdown, page-based for PDFs, sentence-boundary for text
-- 💬 **Streaming Chat** — Real-time response streaming from Gemma4
+- 👁️ **OCR Fallback** — Scanned PDFs auto-detected via grayscale stddev; routed through local LightOnOCR-2-1B (Apple Silicon MPS), with Gemma4 vision as a second fallback
+- 💬 **Streaming Chat** — Real-time NDJSON streaming with live token render
+- 🔢 **Inline `[N]` Citations** — Numbered markers in the answer link/scroll to the matching source card
+- 🗣️ **Multi-Turn Memory** — Session-scoped history (last 6 turns) so follow-ups like *"what's its time complexity?"* resolve against prior context
+- 🛑 **Honest Empty-State** — Low-agreement retrievals render a distinct "I don't see this in your notes" card instead of a hallucinated refusal
 - 📎 **Source Citations** — Every answer links back to the exact file and page
 - 🔄 **Incremental Sync** — Auto-detects new/modified/deleted files via SHA-256 manifest
 - 📁 **Drag & Drop Upload** — Add new files directly from the browser
-- 🎯 **Course Filtering** — Scope questions to a specific course
+- 🎯 **Course Filtering** — Persistent course pill; switching courses clears chat history atomically
 - ⚡ **GPU Offloading** — Heavy generation and multimodal OCR bypass Mac RAM entirely and execute over the network on a dedicated Windows GPU.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│              Next.js Frontend (React)            │
-│  Chat UI  ·  Document Browser  ·  Source Cards   │
-└──────────────────────┬──────────────────────────┘
-                       │ REST API (NDJSON streaming)
-┌──────────────────────▼──────────────────────────┐
-│            FastAPI Backend (Python)               │
-│                                                   │
-│  Ingestion:  Load → Chunk → Embed → ChromaDB     │
-│  Retrieval:  Vector + BM25 → RRF Fusion          │
-│  Generation: Gemma4 via LM Studio (streaming)     │
-│                                                   │
-│  LM Studio (Windows PC Server - 192.168.x.x)      │
-│  ├── google/gemma-4-26b-a4b  → generation & OCR  │
-│  └── nomic-embed-text        → embeddings        │
-└──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                 Next.js Frontend (React 19)               │
+│  Chat UI · Course Pill · Inline [N] Citations · Sources   │
+└─────────────────────────────┬────────────────────────────┘
+                              │ REST API (NDJSON streaming)
+┌─────────────────────────────▼────────────────────────────┐
+│                  FastAPI Backend (Python)                  │
+│                                                            │
+│  Ingestion:  Load → OCR (if scanned) → Chunk → Embed      │
+│  Retrieval:  Vector + BM25 → RRF + Doc-Type Boost         │
+│  Chain:      Classify (empty/weak/good) → History-Aware    │
+│              Prompt → Gemma4 (streaming)                   │
+│                                                            │
+│  OCR (local): LightOnOCR-2-1B on Apple Silicon MPS         │
+│               ↳ Gemma4 multimodal fallback                 │
+│                                                            │
+│  LM Studio (remote Windows GPU box)                        │
+│  ├── google/gemma-4-26b-a4b  → generation & vision        │
+│  └── nomic-embed-text-v1.5   → embeddings (768-dim)       │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ## Tech Stack
@@ -71,8 +80,8 @@ A **Retrieval-Augmented Generation** system for chatting with your course notes,
 
 ```bash
 # Clone
-git clone https://github.com/erjon-musa/RAG_System.git
-cd RAG_System
+git clone https://github.com/erjon-musa/local-study-rag.git
+cd local-study-rag
 
 # Backend
 python3 -m venv .venv
@@ -81,7 +90,7 @@ pip install -r backend/requirements.txt
 
 # Configure
 cp .env.example .env
-# Edit .env to set your VAULT_PATH
+# Edit .env to set your VAULT_PATH and LMSTUDIO_BASE_URL
 
 # Frontend
 cd frontend && npm install && cd ..
@@ -123,44 +132,79 @@ The system uses a SHA-256 manifest to track what's been ingested. Only new/modif
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/chat` | Streaming chat with source citations |
+| `POST` | `/api/chat` | Streaming chat — accepts `question`, `course`, `top_k`, `history[]` (last 6 turns) |
 | `POST` | `/api/chat/simple` | Non-streaming chat (for testing) |
 | `POST` | `/api/documents/sync` | Scan vault for changes and ingest |
 | `POST` | `/api/documents/upload` | Upload file to vault + auto-ingest |
-| `GET` | `/api/documents` | List indexed documents |
+| `GET` | `/api/documents` | List indexed documents (includes OCR stats per file) |
 | `GET` | `/api/documents/stats` | Index statistics |
 | `GET` | `/api/courses` | List courses with counts |
 | `GET` | `/api/health` | Health check (doesn't load models) |
 
+### Streaming Protocol (NDJSON)
+
+`POST /api/chat` emits newline-delimited JSON events in order:
+
+1. `{"type": "sources", "data": [...]}` — source metadata arrives first
+2. `{"type": "token", "data": "..."}` — individual tokens as they generate
+3. `{"type": "done"}` — stream complete
+
 ## Project Structure
 
 ```
-RAG_System/
+local-study-rag/
 ├── backend/
-│   ├── main.py                 # FastAPI entry point
-│   ├── ingestion/              # Load → Chunk → Embed → Store
-│   │   ├── loader.py           # Multi-format document readers
-│   │   ├── chunker.py          # Smart text chunking
-│   │   ├── embedder.py         # nomic-embed-text via Ollama
-│   │   └── pipeline.py         # Incremental ingestion orchestrator
-│   ├── retrieval/              # Hybrid search engine
-│   │   ├── vector_search.py    # ChromaDB semantic search
-│   │   ├── keyword_search.py   # BM25 keyword search
-│   │   ├── reranker.py         # Reciprocal Rank Fusion
-│   │   └── retriever.py        # Unified retrieval interface
-│   ├── generation/             # LLM generation
-│   │   ├── llm.py              # Ollama Gemma4 client (streaming)
-│   │   ├── prompts.py          # Study-focused system prompts
-│   │   └── chain.py            # RAG chain: retrieve → generate
-│   └── api/                    # REST endpoints
-│       ├── chat.py             # Chat with streaming
-│       ├── documents.py        # Document management
-│       └── courses.py          # Course listing
-├── frontend/                   # Next.js chat UI
+│   ├── main.py                      # FastAPI entry point
+│   ├── ingestion/                   # Load → Chunk → Embed → Store
+│   │   ├── loader.py                # Multi-format readers + OCR trigger
+│   │   ├── chunker.py               # Smart text chunking
+│   │   ├── embedder.py              # nomic-embed-text via LM Studio
+│   │   ├── local_ocr.py             # LightOnOCR-2-1B on Apple Silicon MPS
+│   │   └── pipeline.py              # Incremental ingestion orchestrator
+│   ├── retrieval/                   # Hybrid search engine
+│   │   ├── vector_search.py         # ChromaDB semantic search
+│   │   ├── keyword_search.py        # BM25 keyword search
+│   │   ├── reranker.py              # Reciprocal Rank Fusion + doc-type boost
+│   │   └── retriever.py             # Unified interface + diagnostics
+│   ├── generation/                  # LLM generation
+│   │   ├── llm.py                   # LM Studio client (sync + async streaming)
+│   │   ├── prompts.py                # System prompt + empty-state template
+│   │   │                             #   + history citation neutralization
+│   │   └── chain.py                 # Retrieve → classify → generate chain
+│   └── api/                         # REST endpoints
+│       ├── chat.py                  # Streaming chat + history forwarding
+│       ├── documents.py             # Document management
+│       └── courses.py               # Course listing
+├── frontend/
+│   └── src/
+│       ├── app/page.tsx             # Chat page (messages state + abort)
+│       ├── components/chat/
+│       │   ├── CourseSelectorPill.tsx  # Persistent course scope pill
+│       │   ├── ChatMessage.tsx      # Inline [N] citation rendering
+│       │   └── SourceCard.tsx       # Numbered, jump-to-source cards
+│       └── lib/
+│           ├── api.ts               # streamChat (NDJSON consumer)
+│           └── citations.ts         # Buffered [N] token parser
 ├── scripts/
-│   └── organize_vault.py       # Organize messy files → Obsidian vault
-└── data/                       # ChromaDB + manifest (gitignored)
+│   ├── build_vault.py               # Build the Obsidian-style vault
+│   ├── rebuild_manifest.py          # Reconstruct manifest from ChromaDB
+│   ├── force_reocr.py               # Re-run OCR for flagged files
+│   └── calibrate_classification.py  # Tune retrieval thresholds
+├── tests/
+│   └── test_smoke_queries.py        # 6 golden queries + multi-turn memory
+└── data/                            # ChromaDB + manifest (gitignored)
 ```
+
+## Testing
+
+Golden-query smoke tests live in `tests/test_smoke_queries.py`. They run 2 queries per course across 3 courses, plus a multi-turn memory test (pronoun resolution across turns):
+
+```bash
+source .venv/bin/activate
+PYTHONPATH=. python tests/test_smoke_queries.py
+```
+
+Tests skip (rather than fail) when LM Studio is unreachable — that's a local-environment concern, not a correctness regression.
 
 ## Purpose
 

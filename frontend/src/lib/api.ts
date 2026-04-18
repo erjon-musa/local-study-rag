@@ -16,6 +16,20 @@ export interface Source {
   text_preview: string;
 }
 
+/**
+ * A single prior turn in the conversation, sent back to the backend so the
+ * chain can stitch context (pronoun resolution, elided topics, etc).
+ *
+ * `sources` is optional: it only exists on assistant turns and lets the
+ * backend strip/neutralize `[N]` citation markers before re-embedding the
+ * turn into the prompt. Absent on user turns.
+ */
+export interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+  sources?: Source[];
+}
+
 export interface ChatEvent {
   type: "sources" | "token" | "done";
   data?: Source[] | string;
@@ -55,15 +69,34 @@ export interface StatsResult {
 
 // ── Chat ─────────────────────────────────────────────────────
 
+/**
+ * Stream a chat answer over NDJSON.
+ *
+ * Backward-compatible: callers that don't pass `history` get an empty array.
+ * Pass an `AbortSignal` to let the caller cancel the request mid-stream
+ * (e.g. on course switch). The signal is forwarded to `fetch()`; once aborted
+ * the underlying reader rejects and the generator terminates.
+ *
+ * Server caps `history` to 6 turns regardless of what we send, but we don't
+ * rely on that — keep the send payload tight on the client side too.
+ */
 export async function* streamChat(
   question: string,
   course?: string,
-  topK: number = 4
+  topK: number = 10,
+  history: HistoryMessage[] = [],
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatEvent> {
   const response = await fetch(`${API_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, course: course || null, top_k: topK }),
+    body: JSON.stringify({
+      question,
+      course: course || null,
+      top_k: topK,
+      history,
+    }),
+    signal,
   });
 
   if (!response.ok) {
@@ -76,32 +109,42 @@ export async function* streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
 
-    for (const line of lines) {
-      if (line.trim()) {
-        try {
-          const event: ChatEvent = JSON.parse(line);
-          yield event;
-        } catch {
-          // Skip malformed lines
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const event: ChatEvent = JSON.parse(line);
+            yield event;
+          } catch {
+            // Skip malformed lines
+          }
         }
       }
     }
-  }
 
-  // Process remaining buffer
-  if (buffer.trim()) {
+    // Process remaining buffer
+    if (buffer.trim()) {
+      try {
+        yield JSON.parse(buffer);
+      } catch {
+        // Skip
+      }
+    }
+  } finally {
+    // Ensure the reader is released on abort / early return so the underlying
+    // connection is torn down promptly.
     try {
-      yield JSON.parse(buffer);
+      reader.releaseLock();
     } catch {
-      // Skip
+      // Already released — fine.
     }
   }
 }

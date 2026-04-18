@@ -5,9 +5,24 @@ import type { Source } from "@/lib/api";
 
 interface SourceCardProps {
   source: Source;
+  /** 1-based index used to wire [N] citation chips to source cards. */
+  index: number;
+  /**
+   * DOM id used by scroll-into-view. Parent passes a unique id per assistant
+   * turn (e.g. `source-card-<messageId>-<n>`) so a click on turn 2's `[1]`
+   * doesn't scroll to turn 1's `[1]`.
+   */
+  domId: string;
+  /** When true, apply the 1.5s pulse highlight. */
+  highlighted?: boolean;
 }
 
-export default function SourceCard({ source }: SourceCardProps) {
+export default function SourceCard({
+  source,
+  index,
+  domId,
+  highlighted,
+}: SourceCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const fileIcon = () => {
@@ -26,7 +41,12 @@ export default function SourceCard({ source }: SourceCardProps) {
 
   return (
     <>
-      <div className="source-card" onClick={() => setExpanded(true)}>
+      <div
+        id={domId}
+        className={`source-card${highlighted ? " source-card-highlight" : ""}`}
+        onClick={() => setExpanded(true)}
+      >
+        <span className="source-rank" aria-hidden="true">{index}</span>
         <span className="source-icon">{fileIcon()}</span>
         <div className="source-info">
           <div className="source-name">{source.filename}</div>

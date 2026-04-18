@@ -23,7 +23,7 @@ import chromadb
 
 from .chunker import Chunk, chunk_documents
 from .embedder import embed_in_batches
-from .loader import LOADERS, Document, load_file
+from .loader import LOADERS, Document, PdfLoadStats, load_file_with_stats
 
 # Supported file extensions (from loader.py)
 SUPPORTED_EXTENSIONS = set(LOADERS.keys()) | {".csv", ".pub"}
@@ -32,7 +32,7 @@ VAULT_PATH = os.getenv("VAULT_PATH", str(Path.home() / "Documents" / "StudyVault
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
-MANIFEST_PATH = os.path.join(os.getenv("CHROMA_PERSIST_DIR", "./data"), "manifest.json")
+MANIFEST_PATH = os.getenv("MANIFEST_PATH", "./data/manifest.json")
 
 
 @dataclass
@@ -110,10 +110,17 @@ class IngestionPipeline:
         return {"files": {}}
 
     def _save_manifest(self):
-        """Save the file manifest to disk."""
+        """
+        Save the file manifest to disk atomically.
+
+        Writes to `<manifest>.tmp` first, then `os.replace` swaps it into
+        place. Prevents partial-write corruption if the process is killed
+        mid-write (e.g. during a long sync).
+        """
         self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.manifest_path, "w") as f:
-            json.dump(self.manifest, f, indent=2)
+        tmp = self.manifest_path.with_suffix(self.manifest_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(self.manifest, indent=2), encoding="utf-8")
+        os.replace(tmp, self.manifest_path)
 
     # ── File hashing ─────────────────────────────────────────
 
@@ -237,11 +244,21 @@ class IngestionPipeline:
 
     # ── Ingestion ────────────────────────────────────────────
 
-    def _ingest_file(self, filepath: Path) -> Tuple[int, List[str]]:
+    def _ingest_file(
+        self, filepath: Path, force: bool = False
+    ) -> Tuple[int, List[str], PdfLoadStats]:
         """
         Ingest a single file: load → chunk → embed → store.
-        
-        Returns (chunk_count, chunk_ids).
+
+        Returns (chunk_count, chunk_ids, stats). Stats include per-page
+        OCR outcomes so the caller can record `ocr_pages`/`ocr_failed_pages`
+        on the manifest and surface them via the API.
+
+        `force=True` signals to callers (e.g. `scripts/force_reocr.py`) that
+        the caller intentionally bypassed the manifest hash check. It does
+        not change ingest behavior inside this method — both paths go
+        through load → chunk → embed — but we record it on the manifest
+        entry below for traceability.
         """
         rel_path = str(filepath.relative_to(self.vault_path))
         course, category = self._detect_course_and_category(rel_path)
@@ -251,10 +268,10 @@ class IngestionPipeline:
         doc_type = self._extract_doc_type(category)
         year = self._extract_year(filepath.name)
 
-        # Load
-        docs = load_file(filepath, course=course, category=category)
+        # Load (with per-page OCR stats)
+        docs, stats = load_file_with_stats(filepath, course=course, category=category)
         if not docs:
-            return 0, []
+            return 0, [], stats
 
         # Inject enriched metadata into every loaded document
         for doc in docs:
@@ -266,7 +283,7 @@ class IngestionPipeline:
         # Chunk
         chunks = chunk_documents(docs, max_size=self.chunk_size, overlap=self.chunk_overlap)
         if not chunks:
-            return 0, []
+            return 0, [], stats
 
         # Embed
         texts = [c.text for c in chunks]
@@ -287,7 +304,7 @@ class IngestionPipeline:
             metadatas=metadatas,
         )
 
-        return len(chunks), ids
+        return len(chunks), ids, stats
 
     def _remove_file(self, rel_path: str):
         """Remove a file's chunks from ChromaDB and manifest."""
@@ -297,9 +314,22 @@ class IngestionPipeline:
         if chunk_ids:
             try:
                 self.collection.delete(ids=chunk_ids)
-            except Exception:
-                # IDs might not exist anymore, that's fine
-                pass
+            except Exception as e:
+                # IDs might not exist anymore — log so it's visible but not fatal.
+                print(
+                    f"  ⚠ _remove_file: delete by id failed for {rel_path}: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+        # Belt-and-suspenders: also sweep by rel_path metadata in case the
+        # manifest's chunk_ids list drifted from ChromaDB reality.
+        try:
+            self.collection.delete(where={"rel_path": rel_path})
+        except Exception as e:
+            print(
+                f"  ⚠ _remove_file: delete by where failed for {rel_path}: "
+                f"{type(e).__name__}: {e}"
+            )
 
         # Remove from manifest
         self.manifest["files"].pop(rel_path, None)
@@ -323,8 +353,11 @@ class IngestionPipeline:
                     name="study_notes",
                     metadata={"hnsw:space": "cosine"},
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                print(
+                    f"  ⚠ force_full: could not reset collection: "
+                    f"{type(e).__name__}: {e}"
+                )
 
         # Scan for changes
         scan = self.scan()
@@ -345,38 +378,51 @@ class IngestionPipeline:
             self._remove_file(rel_path)
 
             try:
-                chunk_count, chunk_ids = self._ingest_file(filepath)
+                chunk_count, chunk_ids, stats = self._ingest_file(filepath)
                 self.manifest["files"][rel_path] = {
                     "hash": self._file_hash(filepath),
                     "chunks": chunk_count,
                     "ingested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     "chunk_ids": chunk_ids,
+                    "ocr_pages": stats.ocr_pages,
+                    "ocr_failed_pages": stats.ocr_failed_pages,
+                    "skipped_blank_pages": stats.skipped_blank_pages,
                 }
                 result.updated += 1
                 result.total_chunks += chunk_count
+                # Forward per-page OCR failures up to IngestResult so sync API can surface them.
+                for err in stats.errors:
+                    result.errors.append(f"{rel_path}: {err}")
                 print(f"  ↻ Updated: {rel_path} ({chunk_count} chunks)")
             except Exception as e:
-                result.errors.append(f"{rel_path}: {e}")
-                print(f"  ✗ Error updating {rel_path}: {e}")
+                err_class = type(e).__name__
+                result.errors.append(f"{rel_path}: {err_class}: {e}")
+                print(f"  ✗ Skipped {rel_path}: {err_class}: {e}")
 
         # Process new files
         for filepath in scan.new_files:
             rel_path = str(filepath.relative_to(self.vault_path))
 
             try:
-                chunk_count, chunk_ids = self._ingest_file(filepath)
+                chunk_count, chunk_ids, stats = self._ingest_file(filepath)
                 self.manifest["files"][rel_path] = {
                     "hash": self._file_hash(filepath),
                     "chunks": chunk_count,
                     "ingested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     "chunk_ids": chunk_ids,
+                    "ocr_pages": stats.ocr_pages,
+                    "ocr_failed_pages": stats.ocr_failed_pages,
+                    "skipped_blank_pages": stats.skipped_blank_pages,
                 }
                 result.new += 1
                 result.total_chunks += chunk_count
+                for err in stats.errors:
+                    result.errors.append(f"{rel_path}: {err}")
                 print(f"  ✓ Ingested: {rel_path} ({chunk_count} chunks)")
             except Exception as e:
-                result.errors.append(f"{rel_path}: {e}")
-                print(f"  ✗ Error ingesting {rel_path}: {e}")
+                err_class = type(e).__name__
+                result.errors.append(f"{rel_path}: {err_class}: {e}")
+                print(f"  ✗ Skipped {rel_path}: {err_class}: {e}")
 
         result.skipped = len(scan.unchanged_files)
         result.duration_seconds = time.time() - start_time

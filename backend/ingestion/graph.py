@@ -7,21 +7,18 @@ then builds and persists a knowledge graph as JSON.
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import openai
-from dotenv import load_dotenv
+from ..config import settings
+from ..lm_client import get_sync_client
 
-load_dotenv()
-
-# ── Configuration ───────────────────────────────────────────────────
-LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
-LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "google/gemma-4-26b-a4b")
-GRAPH_OUTPUT_PATH = Path(os.getenv("GRAPH_OUTPUT_PATH", "./data/knowledge_graph.json"))
+# Aliased here for backwards compatibility — callers can still
+# `from backend.ingestion.graph import GRAPH_OUTPUT_PATH`. Source of
+# truth lives in `backend.config.settings.graph_output_path`.
+GRAPH_OUTPUT_PATH: Path = settings.graph_output_path
 
 # Entity types we tell the LLM to look for
 ENTITY_TYPES = [
@@ -200,14 +197,12 @@ def call_llm(prompt: str, timeout: float = 120.0) -> str:
     Send a prompt to LM Studio and return the response text.
     All processing happens on the PC GPU via LM Link.
     """
-    client = openai.OpenAI(
-        base_url=LMSTUDIO_BASE_URL,
-        api_key="lmstudio-link",
-        timeout=timeout,
-    )
+    # Shared client + per-request timeout (entity extraction needs a longer
+    # ceiling than chat does).
+    client = get_sync_client().with_options(timeout=timeout)
 
     response = client.chat.completions.create(
-        model=LMSTUDIO_MODEL,
+        model=settings.lmstudio_model,
         messages=[
             {"role": "system", "content": "You are a knowledge graph extraction engine. Respond only with valid JSON. Do not use internal reasoning. Respond directly."},
             {"role": "user", "content": prompt},

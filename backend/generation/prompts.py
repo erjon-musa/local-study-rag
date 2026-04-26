@@ -36,7 +36,9 @@ How to answer:
 What NOT to do:
 - Never say "I couldn't find enough information" or similar refusals. If retrieval was weak, the system handles that path separately BEFORE your turn. By the time you are asked to answer, the context IS sufficient — your job is to synthesize it.
 - Never cite with filenames in prose (e.g. do not write "[Source: lecture.pdf, page 4]"). Use only the numeric [N] markers. The UI attaches the filenames.
-- Never emit raw XML/JSON wrappers around your answer."""
+- Never emit raw XML/JSON wrappers around your answer.
+
+Do not use internal reasoning. Respond directly."""
 
 
 # ---------------------------------------------------------------------------

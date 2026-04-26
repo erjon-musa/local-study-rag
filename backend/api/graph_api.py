@@ -6,16 +6,10 @@ and provides endpoints for graph operations.
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from backend.ingestion.graph import GRAPH_OUTPUT_PATH, load_graph
-
-load_dotenv()
+from backend.ingestion.graph import load_graph
 
 router = APIRouter(prefix="/api/graph", tags=["Knowledge Graph"])
 
@@ -27,7 +21,11 @@ async def get_graph():
     if not graph:
         raise HTTPException(
             status_code=404,
-            detail="Knowledge graph not found. Run `python scripts/build_graph.py` to generate it.",
+            detail=(
+                "Knowledge graph not found. Run "
+                "`python scripts/build_graph.py` to generate it (requires "
+                "ingested chunks in ChromaDB and LM Studio running)."
+            ),
         )
     return JSONResponse(content=graph)
 

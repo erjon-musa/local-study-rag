@@ -1,15 +1,23 @@
 import os
 import re
+import sys
 import base64
 import shutil
 from pathlib import Path
-from openai import OpenAI
+
 import fitz  # PyMuPDF
 
-VAULT_DIR = "/Users/erjonmusa/Documents/StudyVault"
-JUNK_DIR = "/Users/erjonmusa/Documents/StudyVault_JunkBin"
-LMSTUDIO_BASE_URL = "http://localhost:1234/v1"
-MODEL_NAME = "google/gemma-4-26b-a4b"
+# Make the backend package importable when run from the project root.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from backend.config import settings  # noqa: E402
+from backend.lm_client import get_sync_client  # noqa: E402
+
+VAULT_DIR = str(settings.vault_path)
+JUNK_DIR = str(settings.vault_path) + "_JunkBin"
+MODEL_NAME = settings.lmstudio_model
 
 PROMPT_TEXT = """What document is this? Give me the document type (exam/lecture/assignment), title, and date if visible. 
 CRITICAL: ONLY return the final proposed file name without the .pdf extension. Do NOT include explanations, markdown formatting, or the .pdf extension.

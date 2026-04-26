@@ -2,27 +2,23 @@
 RAG Study Notes System — FastAPI Backend
 
 Entry point for the API server. Run with:
-    cd backend && uvicorn main:app --reload --port 8000
+    uvicorn backend.main:app --reload --port 8000   # from project root
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-# Load .env from project root
-env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(env_path)
-
+# `backend.config` loads .env on import — no manual load_dotenv needed here.
 from .api.chat import router as chat_router
 from .api.courses import router as courses_router
 from .api.documents import router as documents_router
 from .api.graph_api import router as graph_router
+from .config import settings
 from .generation.llm import check_health
-from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
     title="RAG Study Notes",
@@ -50,7 +46,7 @@ app.include_router(courses_router)
 app.include_router(graph_router)
 
 # Serve the static graph visualizer at /graph
-frontend_graph_path = Path(__file__).parent.parent / "frontend" / "graph"
+frontend_graph_path = settings.project_root / "frontend" / "graph"
 if frontend_graph_path.exists():
     app.mount("/graph", StaticFiles(directory=frontend_graph_path, html=True), name="graph")
 
@@ -62,13 +58,11 @@ async def health():
     Does NOT load any model into Mac RAM.
     """
     llm_status = check_health()
-    
-    vault_path = os.getenv("VAULT_PATH", "")
-    vault_exists = Path(vault_path).expanduser().exists() if vault_path else False
+    vault_exists = settings.vault_path.exists()
 
     return {
         "status": "ok" if llm_status["status"] == "ok" else "degraded",
         "llm": llm_status,
-        "vault_path": vault_path,
+        "vault_path": str(settings.vault_path),
         "vault_exists": vault_exists,
     }

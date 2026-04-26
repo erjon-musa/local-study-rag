@@ -6,15 +6,14 @@ Complements semantic search for technical terms like
 """
 from __future__ import annotations
 
-import json
-import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import List, Optional
 
 from rank_bm25 import BM25Okapi
 
 import chromadb
+
+from ..config import settings
 
 
 @dataclass
@@ -29,10 +28,12 @@ class KeywordResult:
 class KeywordSearch:
     """BM25-based keyword search over indexed chunks."""
 
-    def __init__(self, chroma_persist_dir: str = "./data/chroma"):
-        self.client = chromadb.PersistentClient(path=chroma_persist_dir)
+    def __init__(self, chroma_persist_dir: str = None):
+        self.client = chromadb.PersistentClient(
+            path=chroma_persist_dir or settings.chroma_persist_dir
+        )
         self.collection = self.client.get_or_create_collection(
-            name="study_notes",
+            name=settings.chroma_collection_name,
             metadata={"hnsw:space": "cosine"},
         )
         self._index = None

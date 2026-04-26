@@ -22,15 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Tuple
 
-import openai
-
-LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
-LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "google_gemma-4-26b-a4b-it")
-
-# Local OCR (LightOnOCR-2-1B on MPS)
-USE_LOCAL_OCR = os.getenv("USE_LOCAL_OCR", "true").lower() in ("1", "true", "yes")
-LOCAL_OCR_MODEL_NAME = os.getenv("LOCAL_OCR_MODEL", "lightonai/LightOnOCR-2-1B")
-OCR_MAX_IMAGE_DIM = int(os.getenv("OCR_MAX_IMAGE_DIM", "1024"))
+from ..config import settings
+from ..lm_client import get_sync_client
 
 # Lazy-initialized local OCR model — populated on first use to avoid loading
 # 2 GB of weights into every Python process that imports this module.
@@ -69,10 +62,10 @@ def _ensure_local_ocr_model():
     # MPS has spotty bf16 support; fp32 is the documented choice on Apple Silicon
     _OCR_DTYPE = torch.float32 if _OCR_DEVICE == "mps" else torch.bfloat16
 
-    print(f"    Loading local OCR model {LOCAL_OCR_MODEL_NAME} on {_OCR_DEVICE} ({_OCR_DTYPE})...")
-    _OCR_PROCESSOR = LightOnOcrProcessor.from_pretrained(LOCAL_OCR_MODEL_NAME)
+    print(f"    Loading local OCR model {settings.local_ocr_model} on {_OCR_DEVICE} ({_OCR_DTYPE})...")
+    _OCR_PROCESSOR = LightOnOcrProcessor.from_pretrained(settings.local_ocr_model)
     _OCR_MODEL = LightOnOcrForConditionalGeneration.from_pretrained(
-        LOCAL_OCR_MODEL_NAME, torch_dtype=_OCR_DTYPE
+        settings.local_ocr_model, torch_dtype=_OCR_DTYPE
     ).to(_OCR_DEVICE)
     print(f"    Local OCR ready.")
 
@@ -91,8 +84,8 @@ def _ocr_page_local(page_image_bytes: bytes) -> str:
         _ensure_local_ocr_model()
 
         pil_image = Image.open(io.BytesIO(page_image_bytes))
-        if max(pil_image.size) > OCR_MAX_IMAGE_DIM:
-            scale = OCR_MAX_IMAGE_DIM / max(pil_image.size)
+        if max(pil_image.size) > settings.ocr_max_image_dim:
+            scale = settings.ocr_max_image_dim / max(pil_image.size)
             new_size = (int(pil_image.size[0] * scale), int(pil_image.size[1] * scale))
             pil_image = pil_image.resize(new_size, Image.LANCZOS)
 
@@ -129,13 +122,10 @@ def _ocr_page_with_gemma(page_image_bytes: bytes) -> str:
     b64_image = base64.b64encode(page_image_bytes).decode("utf-8")
 
     try:
-        client = openai.OpenAI(
-            base_url=LMSTUDIO_BASE_URL,
-            api_key="lmstudio-link",
-        )
+        client = get_sync_client()
 
         response = client.chat.completions.create(
-            model=LMSTUDIO_MODEL,
+            model=settings.lmstudio_model,
             messages=[
                 {
                     "role": "user",
@@ -173,7 +163,7 @@ def _ocr_page(page_image_bytes: bytes) -> Tuple[str, str]:
 
     Returns (text, method_used) where method is 'ocr_local_lighton' or 'ocr_gemma4'.
     """
-    if USE_LOCAL_OCR:
+    if settings.use_local_ocr:
         text = _ocr_page_local(page_image_bytes)
         if text:
             return text, "ocr_local_lighton"
@@ -333,11 +323,12 @@ def load_pdf(
 
         # Broadened OCR trigger: fires on any page with visual content (images
         # OR non-blank pixmap) — catches scanned PDFs whose pages are stored
-        # as clipped pixmaps without registered images. `DISABLE_OCR` is still
-        # a hard kill switch for dev iterations where we don't want MPS churn.
+        # as clipped pixmaps without registered images. `settings.disable_ocr`
+        # (DISABLE_OCR env var) is the hard kill switch for dev iterations
+        # where we don't want MPS churn.
         should_ocr = (
             not text
-            and "DISABLE_OCR" not in os.environ
+            and not settings.disable_ocr
             and _page_has_visual_content(page)
         )
 

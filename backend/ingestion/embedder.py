@@ -3,30 +3,16 @@ Embedding generator using nomic-embed-text via LM Studio.
 
 Routes all embedding requests through LM Studio's OpenAI-compatible
 /v1/embeddings endpoint, which handles routing to the PC GPU via LM Link.
+
+Config (model id, base URL, API key) is centralized in `backend.config`.
+Clients come from `backend.lm_client` so we share connection pools.
 """
 from __future__ import annotations
 
-import os
 from typing import List
 
-import openai
-
-LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-nomic-embed-text-v1.5")
-
-
-def _get_client() -> openai.OpenAI:
-    return openai.OpenAI(
-        base_url=LMSTUDIO_BASE_URL,
-        api_key="lmstudio-link",
-    )
-
-
-def _get_async_client() -> openai.AsyncOpenAI:
-    return openai.AsyncOpenAI(
-        base_url=LMSTUDIO_BASE_URL,
-        api_key="lmstudio-link",
-    )
+from ..config import settings
+from ..lm_client import get_async_client, get_sync_client
 
 
 async def embed_texts(texts: List[str], model: str = None) -> List[List[float]]:
@@ -34,8 +20,8 @@ async def embed_texts(texts: List[str], model: str = None) -> List[List[float]]:
     Generate embeddings for a list of texts via LM Studio.
     Returns a list of embedding vectors.
     """
-    model = model or EMBEDDING_MODEL
-    client = _get_async_client()
+    model = model or settings.embedding_model
+    client = get_async_client()
 
     response = await client.embeddings.create(
         model=model,
@@ -49,8 +35,8 @@ def embed_texts_sync(texts: List[str], model: str = None) -> List[List[float]]:
     """
     Synchronous version of embed_texts.
     """
-    model = model or EMBEDDING_MODEL
-    client = _get_client()
+    model = model or settings.embedding_model
+    client = get_sync_client()
 
     response = client.embeddings.create(
         model=model,

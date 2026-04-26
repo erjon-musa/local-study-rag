@@ -21,18 +21,13 @@ from typing import Dict, List, Optional, Tuple
 
 import chromadb
 
+from ..config import settings
 from .chunker import Chunk, chunk_documents
 from .embedder import embed_in_batches
 from .loader import LOADERS, Document, PdfLoadStats, load_file_with_stats
 
 # Supported file extensions (from loader.py)
 SUPPORTED_EXTENSIONS = set(LOADERS.keys()) | {".csv", ".pub"}
-
-VAULT_PATH = os.getenv("VAULT_PATH", str(Path.home() / "Documents" / "StudyVault"))
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
-CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "100"))
-MANIFEST_PATH = os.getenv("MANIFEST_PATH", "./data/manifest.json")
 
 
 @dataclass
@@ -84,16 +79,16 @@ class IngestionPipeline:
         chunk_overlap: int = None,
         manifest_path: str = None,
     ):
-        self.vault_path = Path(vault_path or VAULT_PATH).expanduser()
-        self.chroma_persist_dir = chroma_persist_dir or CHROMA_PERSIST_DIR
-        self.chunk_size = chunk_size or CHUNK_SIZE
-        self.chunk_overlap = chunk_overlap or CHUNK_OVERLAP
-        self.manifest_path = Path(manifest_path or MANIFEST_PATH)
+        self.vault_path = Path(vault_path or settings.vault_path).expanduser()
+        self.chroma_persist_dir = chroma_persist_dir or settings.chroma_persist_dir
+        self.chunk_size = chunk_size or settings.chunk_size
+        self.chunk_overlap = chunk_overlap or settings.chunk_overlap
+        self.manifest_path = Path(manifest_path or settings.manifest_path)
 
         # Initialize ChromaDB
         self.chroma_client = chromadb.PersistentClient(path=self.chroma_persist_dir)
         self.collection = self.chroma_client.get_or_create_collection(
-            name="study_notes",
+            name=settings.chroma_collection_name,
             metadata={"hnsw:space": "cosine"},
         )
 
@@ -348,9 +343,9 @@ class IngestionPipeline:
             # Clear everything and start fresh
             self.manifest = {"files": {}}
             try:
-                self.chroma_client.delete_collection("study_notes")
+                self.chroma_client.delete_collection(settings.chroma_collection_name)
                 self.collection = self.chroma_client.get_or_create_collection(
-                    name="study_notes",
+                    name=settings.chroma_collection_name,
                     metadata={"hnsw:space": "cosine"},
                 )
             except Exception as e:

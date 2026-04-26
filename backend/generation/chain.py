@@ -314,8 +314,7 @@ class RAGChain:
         )
 
         messages = (
-            [{"role": "system", "content": STUDY_ASSISTANT_PROMPT
-              + "\n\nDo not use internal reasoning. Respond directly."}]
+            [{"role": "system", "content": STUDY_ASSISTANT_PROMPT}]
             + history_messages
             + [{"role": "user", "content": final_user_content}]
         )

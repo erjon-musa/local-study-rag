@@ -9,11 +9,11 @@ instead of the full course name.
 """
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from ..config import settings
 from .keyword_search import KeywordSearch
 from .reranker import RankedResult, reciprocal_rank_fusion
 from .vector_search import VectorSearch
@@ -115,7 +115,7 @@ class HybridRetriever:
     """
 
     def __init__(self, chroma_persist_dir: str = None):
-        persist_dir = chroma_persist_dir or os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
+        persist_dir = chroma_persist_dir or settings.chroma_persist_dir
         self.vector_search = VectorSearch(chroma_persist_dir=persist_dir)
         self.keyword_search = KeywordSearch(chroma_persist_dir=persist_dir)
 

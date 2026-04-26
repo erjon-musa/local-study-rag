@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import chromadb
 
+from ..config import settings
 from ..ingestion.embedder import embed_single
 
 
@@ -23,10 +24,12 @@ class SearchResult:
 class VectorSearch:
     """Semantic search over the ChromaDB collection."""
 
-    def __init__(self, chroma_persist_dir: str = "./data/chroma"):
-        self.client = chromadb.PersistentClient(path=chroma_persist_dir)
+    def __init__(self, chroma_persist_dir: str = None):
+        self.client = chromadb.PersistentClient(
+            path=chroma_persist_dir or settings.chroma_persist_dir
+        )
         self.collection = self.client.get_or_create_collection(
-            name="study_notes",
+            name=settings.chroma_collection_name,
             metadata={"hnsw:space": "cosine"},
         )
 

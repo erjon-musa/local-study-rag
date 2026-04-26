@@ -26,19 +26,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
-import openai
-from dotenv import load_dotenv
+
+# Make the backend package importable when run from the project root.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from backend.config import settings  # noqa: E402
+from backend.lm_client import get_sync_client  # noqa: E402
 
 # ============================================================
-# Configuration
+# Configuration (sourced from backend.config)
 # ============================================================
 
-load_dotenv()
-
-LMSTUDIO_BASE_URL: str = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
-LMSTUDIO_MODEL: str = os.getenv("LMSTUDIO_MODEL", "google/gemma-4-26b-a4b")
-_vault_env = os.getenv("VAULT_PATH", str(Path.home() / "Documents" / "StudyVault"))
-VAULT_DIR = Path(_vault_env).expanduser()
+VAULT_DIR = settings.vault_path
 
 SOURCE_DIR = Path.home() / "Documents" / "Winter 2026"
 
@@ -110,7 +111,7 @@ def check_lmstudio(exit_on_fail: bool = True) -> bool:
     Returns True if healthy. When *exit_on_fail* is True (default),
     calls sys.exit(1) on failure; otherwise returns False.
     """
-    url = f"{LMSTUDIO_BASE_URL}/models"
+    url = f"{settings.lmstudio_base_url}/models"
     try:
         resp = httpx.get(url, timeout=5.0)
         resp.raise_for_status()
@@ -124,7 +125,7 @@ def check_lmstudio(exit_on_fail: bool = True) -> bool:
     except Exception:
         if exit_on_fail:
             print(
-                f"{RED}ERROR: Cannot connect to LM Studio at {LMSTUDIO_BASE_URL}{RESET}\n"
+                f"{RED}ERROR: Cannot connect to LM Studio at {settings.lmstudio_base_url}{RESET}\n"
                 "Please ensure LM Studio is running with a Gemma model loaded."
             )
             sys.exit(1)
@@ -454,9 +455,9 @@ def _call_gemma_text(course_name: str, category: str, text_preview: str) -> str 
         f"Content preview:\n{text_preview}"
     )
     try:
-        client = openai.OpenAI(base_url=LMSTUDIO_BASE_URL, api_key="lm-studio")
+        client = get_sync_client()
         response = client.chat.completions.create(
-            model=LMSTUDIO_MODEL,
+            model=settings.lmstudio_model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
@@ -493,9 +494,9 @@ def _call_gemma_ocr(course_name: str, category: str, b64_image: str) -> str | No
         },
     ]
     try:
-        client = openai.OpenAI(base_url=LMSTUDIO_BASE_URL, api_key="lm-studio")
+        client = get_sync_client()
         response = client.chat.completions.create(
-            model=LMSTUDIO_MODEL,
+            model=settings.lmstudio_model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": content},
@@ -632,8 +633,8 @@ def main() -> None:
     print(f"{'=' * 60}")
     print(f"\n  Source : {SOURCE_DIR}")
     print(f"  Vault  : {VAULT_DIR}")
-    print(f"  Model  : {LMSTUDIO_MODEL}")
-    print(f"  LM URL : {LMSTUDIO_BASE_URL}\n")
+    print(f"  Model  : {settings.lmstudio_model}")
+    print(f"  LM URL : {settings.lmstudio_base_url}\n")
 
     # ----------------------------------------------------------
     # Phase 0 — LM Studio health check

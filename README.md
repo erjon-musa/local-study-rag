@@ -47,7 +47,7 @@ A **Retrieval-Augmented Generation** system for chatting with your course notes,
 │               ↳ Gemma4 multimodal fallback                 │
 │                                                            │
 │  LM Studio (remote Windows GPU box)                        │
-│  ├── google/gemma-4-26b-a4b  → generation & vision        │
+│  ├── google/gemma-3-27b-it   → generation & vision        │
 │  └── nomic-embed-text-v1.5   → embeddings (768-dim)       │
 └───────────────────────────────────────────────────────────┘
 ```

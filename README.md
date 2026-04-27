@@ -155,26 +155,28 @@ The system uses a SHA-256 manifest to track what's been ingested. Only new/modif
 local-study-rag/
 ├── backend/
 │   ├── main.py                      # FastAPI entry point
+│   ├── config.py                    # Centralized env-driven settings (single source of truth)
+│   ├── lm_client.py                 # Cached sync/async OpenAI-SDK client factories
 │   ├── ingestion/                   # Load → Chunk → Embed → Store
-│   │   ├── loader.py                # Multi-format readers + OCR trigger
+│   │   ├── loader.py                # Multi-format readers + inlined OCR (LightOnOCR + Gemma4 fallback)
 │   │   ├── chunker.py               # Smart text chunking
 │   │   ├── embedder.py              # nomic-embed-text via LM Studio
-│   │   ├── local_ocr.py             # LightOnOCR-2-1B on Apple Silicon MPS
-│   │   └── pipeline.py              # Incremental ingestion orchestrator
+│   │   ├── pipeline.py              # Incremental ingestion orchestrator (SHA-256 manifest)
+│   │   └── graph.py                 # Entity / relationship extraction (knowledge graph)
 │   ├── retrieval/                   # Hybrid search engine
 │   │   ├── vector_search.py         # ChromaDB semantic search
 │   │   ├── keyword_search.py        # BM25 keyword search
 │   │   ├── reranker.py              # Reciprocal Rank Fusion + doc-type boost
 │   │   └── retriever.py             # Unified interface + diagnostics
 │   ├── generation/                  # LLM generation
-│   │   ├── llm.py                   # LM Studio client (sync + async streaming)
-│   │   ├── prompts.py                # System prompt + empty-state template
-│   │   │                             #   + history citation neutralization
+│   │   ├── llm.py                   # LM Studio client (sync + async streaming, leaked-tag filter)
+│   │   ├── prompts.py               # System prompt + empty-state template + history citation neutralization
 │   │   └── chain.py                 # Retrieve → classify → generate chain
 │   └── api/                         # REST endpoints
 │       ├── chat.py                  # Streaming chat + history forwarding
 │       ├── documents.py             # Document management
-│       └── courses.py               # Course listing
+│       ├── courses.py               # Course listing
+│       └── graph_api.py             # Knowledge-graph nodes (serves /graph static viewer)
 ├── frontend/
 │   └── src/
 │       ├── app/page.tsx             # Chat page (messages state + abort)
@@ -186,12 +188,21 @@ local-study-rag/
 │           ├── api.ts               # streamChat (NDJSON consumer)
 │           └── citations.ts         # Buffered [N] token parser
 ├── scripts/
-│   ├── build_vault.py               # Build the Obsidian-style vault
+│   ├── build_vault.py               # Build the Obsidian-style vault from raw inputs
+│   ├── organize_vault.py            # Reorganize messy files into course/year structure
+│   ├── audit_and_rename.py          # Audit + rename vault filenames to convention
 │   ├── rebuild_manifest.py          # Reconstruct manifest from ChromaDB
+│   ├── force_ingest.py              # Bypass manifest and re-ingest everything
 │   ├── force_reocr.py               # Re-run OCR for flagged files
-│   └── calibrate_classification.py  # Tune retrieval thresholds
-├── tests/
-│   └── test_smoke_queries.py        # 6 golden queries + multi-turn memory
+│   ├── build_graph.py               # Build the knowledge graph
+│   ├── calibrate_classification.py  # Tune retrieval thresholds
+│   ├── smoke_test.py                # End-to-end health + chat verification (with timings)
+│   ├── diagnose_astar.py            # One-off retrieval diagnostic
+│   └── test_*.py                    # Ad-hoc smoke scripts (Gemma, OCR, retrieval)
+├── tests/                           # pytest-compatible (also runnable directly)
+│   ├── test_smoke_queries.py        # 6 golden queries + multi-turn memory
+│   ├── test_neutralize_citations.py # Citation-rewrite unit tests (no infra)
+│   └── test_retrieval_doc_type.py   # Doc-type boost / hint filter assertions
 └── data/                            # ChromaDB + manifest (gitignored)
 ```
 
